@@ -27,7 +27,7 @@ def generateGraph(randomSeed = 1, membershipMatrix = np.array([]) ):
 			[0,0,10],    #user13
 			[0,0,10],    #user14
 			[0,0,10]     #user15	
-		])
+			])
 
 	numberNodes = membershipMatrix.shape[0]
 	nodeNames = ["{0:0>2}".format(v) for v in range(1,numberNodes+1)]
@@ -61,3 +61,6 @@ def generateGraph(randomSeed = 1, membershipMatrix = np.array([]) ):
 	communityGraph.es['weight'] = adjacencyMatrix[adjacencyMatrix.nonzero()]
 
 	return communityGraph
+
+def generateSnapGraph(randomSeed = 1, membershipMatrix = np.array([]) ):
+	return  generateGraph(randomSeed, membershipMatrix )
