@@ -1,9 +1,9 @@
 numpy==1.8.2
-scipy==0.13.3
+scipy==0.16.0
 scikit-learn==0.15.2
 matplotlib==1.3.1
 tabulate==0.7.5
-pandas==0.15.0
+pandas==0.16.2
 ipython==4.0.0
 jupyter==1.0.0
 Theano==0.7.0

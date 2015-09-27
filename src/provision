@@ -114,10 +114,10 @@ function checkAndInstallPackage () {
 		if [[ $permission == [yY] ]];then
 			#all linux distributions come with python aparently...
 			platform=$(python -mplatform)
-			if [ $(echo $platform | grep ubuntu) ]; then
+			if [ $(echo $platform | grep -i debian) ]; then
 				#ubuntu installation
 				sudo apt-get install --force-yes $package
-			elif [ $(echo $platform | grep centos) ]; then
+			elif [ $(echo $platform | grep -i centos) ]; then
 				#centos installation
 				sudo yum install -y $package
 			else
@@ -136,10 +136,10 @@ function checkAndInstallPackage () {
 function checkForInstalledPackage () {
 	package=$1
 	platform=$(python -mplatform)
-	if [ $(echo $platform | grep ubuntu) ]; then
+	if [ $(echo $platform | grep -i debian) ]; then
 		dpkg -s $package > /dev/null 2>&1
 		echo $? 
-	elif [ $(echo $platform | grep centos) ]; then
+	elif [ $(echo $platform | grep -i centos) ]; then
 		yum list installed $package > /dev/null 2>&1
 		echo $?
 	else
@@ -237,7 +237,7 @@ declare -a centosGroups=(
 	)
 
 platform=$(python -mplatform)
-if [ $(echo $platform | grep -i ubuntu) ]; then
+if [ $(echo $platform | grep -i debian) ]; then
 	for package in "${ubuntuPackages[@]}"; do
 		checkAndInstallPackage $package
 	done
