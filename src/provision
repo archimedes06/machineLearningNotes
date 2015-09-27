@@ -1,0 +1,404 @@
+#!/bin/bash
+#checks the local linux installation for appropsiate packages (at least, the ones I think are needed)
+#and creates a virtual environment based off a requirements file, designated by the 
+#$REQUIREMENTS field
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m'
+##############################################################################################
+#Option Handling
+#default options
+proxy=""
+
+	while [[ $1 == -* ]];  do
+		option=$1
+		shift
+		case $option in 
+			"--proxy"  ) 
+				echo "setting proxy to $1"
+				proxy="--proxy=\"$1\""
+				shift
+				;;
+			* ) echo $option" is an unrecognized option... exiting"
+			    exit 1;;
+		esac
+	done
+##############################################################################################
+
+#name of the projects environment
+#choose somehting unique, as we will overwrite the environment of this name on the users machine
+ENVIRONMENT_NAME="eventLogWork"
+
+#location of the requirements document
+REQUIREMENTS="requirements.pip"
+
+############################################################################################
+#checks if an application is installed
+function checkInstalled() {
+	app=$1
+	command -v $app > /dev/null 2>&1
+	echo $? 
+}
+############################################################################################
+#installs a python package using pip
+function checkAndInstallPipPackage() {
+	package=$1
+	permission=$(getAnswer "Would you like to install $package with pip")
+	if [[ $permission == [yY] ]];then
+		if [[ $2 == "--sudo" ]]; then
+			installPipPackage $package --sudo
+		else 
+			installPipPackage $package
+		fi
+	else
+		echo "skipping installation of ${package}"
+	fi
+}
+############################################################################################
+#checks if a package has been installed with pip
+function installPipPackage() {
+	package=$1
+	if [[ $2 == "--sudo" ]]; then
+		#we want the first pip on the user's path, not sudo's path
+		command="sudo -H $(which pip) install $package --pre --no-cache-dir $proxy"
+		echo -e "executing: $command"
+		eval "$command"
+	else
+		command="pip install $package --pre --no-cache-dir $proxy"
+		echo -e "executing: $command"
+		eval "$command"
+	fi
+}
+############################################################################################
+#checks if the current environment has the correct dependencies
+#returns 1 if all dependencies match, 0 if they do 
+function verifyDependencies() {
+	echo -e "${RED}Verifying installation....${NC}"
+	sleep 1.0
+	requirements=$1
+	arrayIndex=0
+	for line in $(cat $requirements); do
+		#parsing the package and version information from the requirements line  (numpy==1.8.2) 
+		package=$(echo $line | awk -F"==" '{print $1}')
+		version=$(echo $line | awk -F"==" '{print $2}' | sed -e 's/^[[:space:]]*//' | sed -e 's/[[:space:]]*$//')
+		installedVersion=$(pip show $package | grep -e "^Version:" |  cut -d " " -f2 | sed -e 's/^[[:space:]]*//' | sed -e 's/[[:space:]]*$//')
+		if [ "x$installedVersion" == "x" ]; then
+			#the package isn't even installed...
+			errorArray[$arrayIndex]="$package not installed"
+			arrayIndex=$(($arrayIndex+1))
+		else 
+			if [ $installedVersion != $version ]; then
+				#wrong version installed
+				errorArray[$arrayIndex]="$package at version $installedVersion rather than required $version"
+				arrayIndex=$(($arrayIndex+1))
+			fi
+		fi
+	done
+
+	if [ $arrayIndex -ne 0 ]; then
+		for index in $(seq 0 $(($arrayIndex-1))); do
+			element=${errorArray[$index]}
+			echo -e "${RED}$element${NC}"
+		done
+		return 1
+	else
+		return 0
+	fi
+}
+############################################################################################
+#checks if a package has been installed on distribution (using apt-get, yum, etc...)
+function checkAndInstallPackage () {
+	package=$1
+	if [ $(checkForInstalledPackage $package) -ne 0 ]; then
+		permission=$(getAnswer "Would you like to install $package (it may or not be necessary)")
+		if [[ $permission == [yY] ]];then
+			#all linux distributions come with python aparently...
+			platform=$(python -mplatform)
+			if [ $(echo $platform | grep ubuntu) ]; then
+				#ubuntu installation
+				sudo apt-get install --force-yes $package
+			elif [ $(echo $platform | grep centos) ]; then
+				#centos installation
+				sudo yum install -y $package
+			else
+				echo "unknown platform: $platform"
+				echo "exiting..."
+			fi
+		else
+			echo "skipping installation of ${package}"
+		fi
+	else 
+		echo "${package} already installed"
+	fi
+}
+############################################################################################
+#checks if a package has been installed with apt-get
+function checkForInstalledPackage () {
+	package=$1
+	platform=$(python -mplatform)
+	if [ $(echo $platform | grep ubuntu) ]; then
+		dpkg -s $package > /dev/null 2>&1
+		echo $? 
+	elif [ $(echo $platform | grep centos) ]; then
+		yum list installed $package > /dev/null 2>&1
+		echo $?
+	else
+		echo "0"
+	fi
+}
+
+############################################################################################
+#checks if a grou has been installed on distribution (only relevant for centos and yum)
+function checkAndInstallGroup () {
+	group=$1
+	if [ $(checkForInstalledGroups $group) -ne 0 ]; then
+		permission=$(getAnswer "Would you like to install $group")
+		if [[ $permission == [yY] ]];then
+			#centos installation
+			sudo yum groupinstall -y $package
+		else
+			echo "skipping installation of \"${group}\""
+		fi
+	else 
+		echo "\"${group}\" already installed"
+	fi
+}
+############################################################################################
+#checks if a group has been installed with yum
+function checkForInstalledGroups () {
+	group=$1
+	yum grouplist "${group}" | grep Installed > /dev/null 2>&1
+	echo $? 
+}
+############################################################################################
+#won't let you go until you give a valid answer
+function getAnswer () {
+	prompt=$1
+	complete=false
+	while [ $complete != true ]; do
+		read -p "$prompt [y\n]: " result
+		if  [[ $result =~ [nyNY] ]]; then
+			complete=true
+		fi
+	done
+	echo $result
+}
+############################################################################################
+
+
+
+##MAIN SCRIPT###
+#----------------------------------------------------------------------------------------------------
+#Check that necessary linux libraries are installed.
+#loop over list and install missing pacakges
+echo -e "${RED}Checking for installed packages...${NC}"
+sleep 1.0
+
+#checking for installed packages, I don't know which, if any, of these were actually necessary...
+declare -a ubuntuPackages=(python-dev \
+	libagg-dev \
+	libffi-dev \
+	build-essential \
+	libopenblas-dev \
+	libatlas3-base \
+	liblapack-dev \
+	libpng12-dev \
+	libfreetype6-dev \
+	libatlas-dev \
+	libatlas-base-dev\
+	gfortran)
+
+declare -a centosPackages=(
+	zlib-devel \
+	bzip2-devel \
+	openssl-devel \
+	ncurses-devel \
+	sqlite-devel \
+	readline-devel \
+	tk-devel \
+	gdbm-devel \
+	db4-devel \
+	libpcap-devel \
+	xz-devel \
+	python-devel \ 
+    python-nose \
+    python-setuptools \
+    gcc \
+    gcc-gfortran \
+    gcc-c++ \
+    blas-devel \
+    lapack-devel \
+    atlas-devel \
+	libpng-devel
+)
+
+declare -a centosGroups=(
+		'Development tools'
+	)
+
+platform=$(python -mplatform)
+if [ $(echo $platform | grep -i ubuntu) ]; then
+	for package in "${ubuntuPackages[@]}"; do
+		checkAndInstallPackage $package
+	done
+elif [ $(echo $platform | grep -i centos) ]; then
+	for package in "${centosPackages[@]}"; do
+		checkAndInstallPackage $package
+	done
+	#unfortunately, centos also has this thing called groups... which ubuntu doesn't so, we'll put the check here
+	for ((i = 0; i < ${#centosGroups[@]}; i++)); do  
+		checkAndInstallGroup "${centosGroups[$i]}"
+	done
+else
+	echo "unknown platform... skipping library installation.   Hopefully you have everything you need."
+fi
+
+
+#----------------------------------------------------------------------------------------------------
+#Check to make sure the environment name has been changed from the default....
+if [ $ENVIRONMENT_NAME == "DEFAULT_ENVIRONMENT_NAME" ]; then
+	echo -e "${RED}Project is currently still using the default name ($ENVIRONMENT_NAME)${NC}"
+	result=$(getAnswer "Would you like to continue with this name")
+	if [[ $result == [nN] ]]; then
+		if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
+	fi
+fi
+
+
+
+#----------------------------------------------------------------------------------------------------
+#basics of installation, pip, virtualenv, virtualenvWrapper
+#check if pip is installed
+pipInstalled=$(checkInstalled "pip")
+
+if [  $pipInstalled -eq 1 ]; then
+	echo "pip is not installed... "
+	echo -e "back in 2015, instructions for installing pip could be found at ${BLUE}https://pip.pypa.io/en/latest/installing.html${NC}"
+	#exits if script is executed, not if its sourced
+	if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
+fi
+
+#check if virtualenv is installed
+virtualenvPackage="virtualenv"
+virtualenvInstalled=$(checkInstalled $virtualenvPackage)
+
+if [ $virtualenvInstalled -eq 1 ]; then
+	echo "virtualenv does not appear to be installed" 
+	checkAndInstallPipPackage $virtualenvPackage --sudo
+	#checks if installation complted
+	if [ $(checkInstalled $virtualenvPackage) -eq 1 ]; then
+		#exits if script is executed, not if its sourced
+		if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
+	fi
+fi
+
+#check if virtualenvwrapper is installed
+virtualenvWrapperLocation=$(which virtualenvwrapper.sh)
+
+if [ x$virtualenvWrapperLocation = x ]; then
+	echo "virtualenvwrapper does not appear to be installed" 
+	checkAndInstallPipPackage "virtualenvwrapper" --sudo
+	
+	#check if installation succeeded
+	virtualenvWrapperLocation=$(which virtualenvwrapper.sh)
+	if [ x$virtualenvWrapperLocation = x ]; then
+		#exits if script is executed, not if its sourced
+		if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
+	fi
+else 
+	source $virtualenvWrapperLocation
+fi
+
+#check if virtualenwrapper has been added appropriately to bashrc
+grep -q "WORKON_HOME" $HOME/.bashrc
+workonHome=$?
+if [ $workonHome != 0 ]; then
+	echo -e "WORKON_HOME has not been added to $HOME/.bashrc as suggested by virtualenvwrapper"
+	permission=$(getAnswer "append WORKON_HOME to .bashrc")
+	if [[ $permission == [yY] ]];then
+		echo -e "\n#################" >> $HOME/.bashrc
+		echo -e "#where virtualenv stores its virtual environments"
+		echo -e "export WORKON_HOME=$HOME/.virtualenvs" >> $HOME/.bashrc
+        source $HOME/.bashrc
+	fi
+fi
+
+grep -q $(which virtualenvwrapper.sh) $HOME/.bashrc
+sourceResult=$?
+if [ $sourceResult != 0 ]; then
+	echo -e "source virtualenvwrapper has not been added to $HOME/.bashrc as suggested by virtualenvwrapper"
+	permission=$(getAnswer "append the source to .bashrc")
+	if [[ $permission == [yY] ]];then
+		#getting the python version that pip is pointing to
+		topLine=$(head -1 $(which pip))
+		pythonLoc=${topLine:2}
+		echo -e "\n#################" >> $HOME/.bashrc
+		echo -e "#environment variable needed by wrapper" >> $HOME/.bashrc
+		echo -e "VIRTUALENVWRAPPER_PYTHON=\"$pythonLoc\"" >> $HOME/.bashrc
+		echo -e "#allows access to virtualenvwrappers lovely scripts"
+		echo -e "source $virtualenvWrapperLocation" >> $HOME/.bashrc
+        source $HOME/.bashrc
+	fi
+fi
+
+
+#----------------------------------------------------------------------------------------------------
+#locating appropriate virtualenv
+#list all the locally available environments
+environmentFound=false
+for environment in $(lsvirtualenv -b); do
+	if [ $environment = $ENVIRONMENT_NAME ]; then
+		workon $ENVIRONMENT_NAME
+		environmentFound=true
+	fi
+done
+
+#check if the environment was found, if not, then create it
+if [ $environmentFound != true ]; then
+	echo "environment $ENVIRONMENT_NAME not found, creating..."
+	mkvirtualenv $ENVIRONMENT_NAME
+fi
+
+#---------------------------------------------------------------------------------------------------
+#make sure that all required python libraries for environment are installed and up to date
+echo -e "${RED}checking state of environment $ENVIRONMENT_NAME${NC}"
+
+if [ ! -f $REQUIREMENTS ]; then
+	echo "no requirements list detected in current directory ($(pwd -P))"
+	if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
+fi
+
+for package in $(cat $REQUIREMENTS); do	
+	echo -e "${RED}Checking for installation of package $package${NC}"
+	installPipPackage $package
+done
+
+verifyDependencies $REQUIREMENTS
+dependencyResult=$?
+#---------------------------------------------------------------------------------------------------
+
+if [ $dependencyResult -ne 0 ]; then
+		echo "-------------------------------------------------"
+		printf "%s%-46s %s\n" "|" "provisioning failed" "|"
+		echo "-------------------------------------------------"
+else if [ "$0" = "${BASH_SOURCE[0]}" ]; then 
+		echo "-------------------------------------------------"
+		printf "%s%-46s %s\n" "|" "provisioning complete" "|"
+		printf "%s%-46s %s\n" "|" "environment $ENVIRONMENT_NAME should up to date" "|"	
+		echo "|===============================================|"
+		printf "%s%-46s %s\n" "|" "to access the environment, execute..." "|"
+		printf "%s%-46s %s\n" "|" "workon $ENVIRONMENT_NAME" "|"
+		echo "|===============================================|"
+		printf "%s%-46s %s\n" "|" "to exit environment, execute..." "|"
+		printf "%s%-46s %s\n" "|" "deactivate" "|"
+		echo "-------------------------------------------------"
+	else
+		echo "-------------------------------------------------"
+		printf "%s%-46s %s\n" "|" "provisioning complete" "|"
+		printf "%s%-46s %s\n" "|" "environment $ENVIRONMENT_NAME should up to date" "|"	
+		echo "|===============================================|"
+		printf "%s%-46s %s\n" "|" "to exit environment, execute..." "|"
+		printf "%s%-46s %s\n" "|" "deactivate" "|"
+		echo "-------------------------------------------------"
+	fi
+fi

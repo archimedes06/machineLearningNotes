@@ -4,10 +4,16 @@ import igraph as ig;
 import numpy as np;
 import pandas as pd;
 from pylab import *
+import snap as Snap
 #random number generator
 import random;
+import os;
+#locally defined library with some helpful functions
+import Sugar
 
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #method for generating a random graph with underlying communities
 def generateGraph(randomSeed = 1, membershipMatrix = np.array([]) ):
 	if (membershipMatrix.size == 0):
@@ -62,5 +68,31 @@ def generateGraph(randomSeed = 1, membershipMatrix = np.array([]) ):
 
 	return communityGraph
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 def generateSnapGraph(randomSeed = 1, membershipMatrix = np.array([]) ):
-	return  generateGraph(randomSeed, membershipMatrix )
+	ig1 = generateGraph()
+	enumeratedAdjList = enumerate(adjList)
+	def labelConnections(tuple):
+	    index = tuple[0]
+	    list = tuple[1]
+	    return map(lambda x: (index, x), list)
+
+    a = Sugar.flatmap(labelConnections, list(enumeratedAdjList))
+	flatAdjacencyList = list(a)
+
+	#create a file for writing
+	tempFileName='tempAdjacencyFile.tsv'
+	tempAdjFile = open(tempFileName, 'w')
+	for element in flatAdjacencyList:
+ 	   tempAdjFile.write(str(element[0]) + "\t"+str(element[1])+"\n")
+    
+	tempAdjFile.close()
+
+	#now load in temporary file
+	network = Snap.LoadEdgeList(Snap.PNEANet, tempFileName, 0, 1)
+
+	#deleting the temp file
+	os.remove(tempAdjFile)
+
+	#now, return our snap graph
+	return network;
