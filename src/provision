@@ -1,36 +1,114 @@
 #!/bin/bash
-#checks the local linux installation for appropsiate packages (at least, the ones I think are needed)
+#Written by Brock Bose (brock.bose@ngc.com)
+#checks the local linux installation for appropiate packages (at least, the ones I think are needed)
 #and creates a virtual environment based off a requirements file, designated by the 
 #$REQUIREMENTS field
 BLUE='\033[0;34m'
+GREEN='\033[0;32m'
 RED='\033[0;31m'
-NC='\033[0m'
+WHITE='\033[0;37m'
+NC='\033[0m'$(tput sgr0)
+BOLD=$(tput bold)
+
+#comment character, we only allow whole line comments
+COMMENT_CHARACTER="#"
+
+#necessay for correct parsing of files by line
+IFS_BKP=$IFS
+IFS=$(echo -e "\n\r")
+
+#name of the projects environment
+#choose somehting unique, as we will overwrite the environment of this name on the users machine
+ENVIRONMENT_NAME="default"
+
+#location of the requirements document
+REQUIREMENTS="requirements.pip"
+
+#The script will check that the python version at pythonPath and in the virtual environment match $PYTHON_VERSION
+#currently this is a strict requirement, it would be nice to be able to indicate something like 2.7.9+
+PYTHON_VERSION=2.7.13
+
+##############################################################################################
+#doesn't do anything but print the help/usage information
+function printHelp() {
+	echo -e "${WHITE}${BOLD}\n------------------------------------------------------------------------------${NC}"
+	echo -e "${BLUE}usage:\n${NC}"
+	echo -e "${BLUE}source provision <options>${NC}"
+	echo -e "${WHITE}${BOLD}\n------------------------------------------------------------------------------${NC}"
+	echo -e "${BLUE}\t-h, --help                     :prints this message${NC}"
+	echo -e "${BLUE}\t-p [proxy], --proxy [proxy]    :pass a proxy server to the python package "
+	       echo -e "\t                                manager, pip. Useful when on DevNet${NC}"
+   	echo -e "${BLUE}\t--python [pathToPython]         :pass the path of the python core to be used "
+	       echo -e "\t                                in the virtual environment.  By default, the"
+	       echo -e "\t                                core located at \$(which python) will be used${NC}"
+	echo -e "${WHITE}${BOLD}\n------------------------------------------------------------------------------${NC}"
+	echo -e "${RED}***Note: sourcing provision will leave the shell in the created virtual environment${NC}"
+	echo -e "${RED}EXAMPLE${NC}"
+	echo -e "${RED}\tsource provision --proxy \"http://contractorproxyeast.northgrum.com\"${NC}"
+	echo -e "${WHITE}${BOLD}\n------------------------------------------------------------------------------${NC}"
+
+}
 ##############################################################################################
 #Option Handling
 #default options
 proxy=""
 
-	while [[ $1 == -* ]];  do
-		option=$1
-		shift
-		case $option in 
-			"--proxy"  ) 
-				echo "setting proxy to $1"
-				proxy="--proxy=\"$1\""
-				shift
-				;;
-			* ) echo $option" is an unrecognized option... exiting"
-			    exit 1;;
-		esac
-	done
+#if python path is not set, then we will use the default python path (i.e. the one you get 
+#if you do a which python)
+pythonPath=$(which python)
+
+#check if python path contains $HOME/.virtualenvs, if so, we're in a virtualenv, drop out, and reassign
+#python path
+currentlyInVirtualEnv=$(echo $pythonPath | grep -q "$HOME/.virtualenvs"; echo $?)
+if [ $currentlyInVirtualEnv -eq 0 ]; then
+	echo -e "${RED}pythonPath contains $HOME/.virtualenvs, most likely we are in a virtual environment."
+	echo -e "${RED}Exiting environment for provisioning"
+	deactivate
+	sleep 2.0
+	pythonPath=$(which python)
+fi
+
+while [[ $1 == -* ]];  do
+	option=$1
+	shift
+	case $option in 
+		"-p" | "--proxy"  ) 
+			proxy="--proxy=\"$1\""
+			echo "setting proxy to $proxy"
+			shift
+			;;
+		"--python" )
+			pythonPath=$(which $1)
+			echo "setting pythonPath to $pythonPath"
+			shift
+			;;	
+		"-h" | "--help" ) 
+			printHelp
+			if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
+			;;
+		* ) echo $option" is an unrecognized option... exiting"
+		    if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
+		    ;;
+	esac
+done
 ##############################################################################################
+#gathering some additional installation information
+ACTUAL_PYTHON_VERSION=$($pythonPath -c 'import sys; import re; print(re.search("^(\d+\.\d+\.\d+)", sys.version).group(1))')
+##############################################################################################
+#start-up text... to prep the user if something goes bad...
+echo -e "${RED}${BOLD}\n---------------------------------------------------------------------------------------------------${NC}"
+echo -e "${RED}Executing provision script for build/check virtual environment ${ENVIRONMENT_NAME} "
+echo -e "against requiments specified in ${REQUIREMENTS}\n${NC}"
+if [ x$proxy = x ]; then echo -e "${GREEN}No proxy specified${NC}"; else echo -e "${GREEN}Proxy = $proxy${NC}"; fi
+echo -e "${GREEN}Python path = $pythonPath; verion = $ACTUAL_PYTHON_VERSION \n${NC}"
+echo -e "${RED}For additional help, execute: ${NC}source provision --help"
+#if [ "$0" = "${BASH_SOURCE[0]}" ]; then
+#	echo -e "${WHITE}The provision script must be sourced to function properly... exiting"
+#	exit 1
+#fi
+echo -e "${RED}${BOLD}---------------------------------------------------------------------------------------------------\n${NC}"
+sleep 3
 
-#name of the projects environment
-#choose somehting unique, as we will overwrite the environment of this name on the users machine
-ENVIRONMENT_NAME="eventLogWork"
-
-#location of the requirements document
-REQUIREMENTS="requirements.pip"
 
 ############################################################################################
 #checks if an application is installed
@@ -38,6 +116,18 @@ function checkInstalled() {
 	app=$1
 	command -v $app > /dev/null 2>&1
 	echo $? 
+}
+############################################################################################
+function inVirtualEnv() {
+	#zero if we are in a virtual environment, 1 if we are not
+	#props where props are due... https://gist.github.com/poprop/1133084
+	VE=$(echo $VIRTUAL_ENV)
+        if [ -z $VE ]; then
+                #VE is null, we are not in a virtual environment
+                echo 1
+        else
+                echo 0
+        fi
 }
 ############################################################################################
 #installs a python package using pip
@@ -58,15 +148,25 @@ function checkAndInstallPipPackage() {
 #checks if a package has been installed with pip
 function installPipPackage() {
 	package=$1
+
+	#Ok, if we are in the virtualEnv, we need to use the local python path, else it will do the
+	#installation globally
+	if [ $(inVirtualEnv) -eq 0 ]; then
+		pipPython=python
+	else
+		pipPython=$pythonPath
+	fi
+	
 	if [[ $2 == "--sudo" ]]; then
 		#we want the first pip on the user's path, not sudo's path
-		command="sudo -H $(which pip) install $package --pre --no-cache-dir $proxy"
-		echo -e "executing: $command"
-		eval "$command"
+		#command="sudo -H $(which pip) install $package --pre --no-cache-dir $proxy"
+		command="sudo -E -H $pipPython -m pip install $package --pre --no-cache-dir $proxy"
+		#echo -e "executing: $command"
+		eval $command
 	else
-		command="pip install $package --pre --no-cache-dir $proxy"
-		echo -e "executing: $command"
-		eval "$command"
+		command="$pipPython -m pip install $package --pre --no-cache-dir $proxy"
+		#echo -e "executing: $command"
+		eval $command
 	fi
 }
 ############################################################################################
@@ -78,18 +178,21 @@ function verifyDependencies() {
 	requirements=$1
 	arrayIndex=0
 	for line in $(cat $requirements); do
-		#parsing the package and version information from the requirements line  (numpy==1.8.2) 
-		package=$(echo $line | awk -F"==" '{print $1}')
-		version=$(echo $line | awk -F"==" '{print $2}' | sed -e 's/^[[:space:]]*//' | sed -e 's/[[:space:]]*$//')
-		installedVersion=$(pip show $package | grep -e "^Version:" |  cut -d " " -f2 | sed -e 's/^[[:space:]]*//' | sed -e 's/[[:space:]]*$//')
-		if [ "x$installedVersion" == "x" ]; then
-			#the package isn't even installed...
-			errorArray[$arrayIndex]="$package not installed"
-			arrayIndex=$(($arrayIndex+1))
-		else 
-			if [ $installedVersion != $version ]; then
-				#wrong version installed
-				errorArray[$arrayIndex]="$package at version $installedVersion rather than required $version"
+		trimmedLine=$(echo $line | tr -d [[:space:]])
+		if [[ $(isValidRequirementLine $trimmedLine) == 0 ]]; then
+			#parsing the package and version information from the requirements line  (numpy==1.8.2) 
+			package=$(echo $line | awk -F"==" '{print $1}')
+			version=$(echo $line | awk -F"==" '{print $2}' | sed -e 's/^[[:space:]]*//' | sed -e 's/[[:space:]]*$//')
+			installedVersion=$(pip show $package | grep -e "^Version:" |  cut -d " " -f2 | sed -e 's/^[[:space:]]*//' | sed -e 's/[[:space:]]*$//')
+			if [ "x$installedVersion" == "x" ]; then
+				#the package isn't even installed...
+				errorArray[$arrayIndex]="$package not installed"
+				arrayIndex=$(($arrayIndex+1))
+			elif [[ "x"$version != "x" ]] && [[ $installedVersion != $version ]]; then
+				#[[ "x"$version != "x" ]] checks that a specific version is required "x"$version == "x" would indicate that the version was 
+				#not sepcified
+				#[[ $installedVersion != $version ]] specifies that the wrong version installed is installed
+				errorArray[$arrayIndex]="$package at version $installedVersion rather than the required $version"
 				arrayIndex=$(($arrayIndex+1))
 			fi
 		fi
@@ -114,10 +217,11 @@ function checkAndInstallPackage () {
 		if [[ $permission == [yY] ]];then
 			#all linux distributions come with python aparently...
 			platform=$(python -mplatform)
-			if [ $(echo $platform | grep -i debian) ]; then
+			echo -e "platform = $platform"
+			if [[ $(echo $platform | grep -i 'debian\|ubuntu') ]]; then
 				#ubuntu installation
 				sudo apt-get install --force-yes $package
-			elif [ $(echo $platform | grep -i centos) ]; then
+			elif [[ $(echo $platform | grep -i centos) ]]; then
 				#centos installation
 				sudo yum install -y $package
 			else
@@ -184,7 +288,66 @@ function getAnswer () {
 	echo $result
 }
 ############################################################################################
+#SYMBOLIC LINKS
+#FIRST USE INSTRUCTIONS: (delete after first use)
+#Do a string replace for the 2 strings in all caps contained between '<>'
 
+function createSymbolicLinks() {
+
+    echo "Creating symbolic links..."
+
+    echo "Would you like to create symbolic data links? (y/n)"
+    read -e input
+    if [ $input == 'y' ]; then flag=true; else flag=false; fi
+
+
+    while $flag; do
+        echo "Please enter the full path to the dataset:"
+        read path
+        echo "Please enter the name for the link:"
+        read name
+        linkpath='./data/raw/'$name
+        echo $linkpath
+        ln -s $path $linkpath
+
+        echo "Would you like to create another link? (y/n)"
+        read input
+        if [ $input == 'y' ]; then flag=true; else flag=false; fi
+
+    done
+}
+############################################################################################
+#returns 0 if python version matches the python pointed to by pythonPath, 1 elsewise
+function checkPythonVersion() {
+	if [ $# -lt 1 ]; then
+		#no path given... use default python
+		echo $(getPythonVersion) | grep -q $PYTHON_VERSION
+	else
+		echo $(getPythonVersion $pythonPath)  | grep -q $PYTHON_VERSION
+	fi	
+	echo $?
+}
+############################################################################################
+function getPythonVersion() {
+        if [ $# -lt 1 ]; then
+                #no path given... use default python
+                echo $(python -c 'import sys; print(sys.version)')
+        else
+                echo $($pythonPath -c 'import sys; print(sys.version)')
+        fi
+}
+############################################################################################
+function isValidRequirementLine() {
+	line=$1
+	trimmedLine=$(echo $line | tr -d [[:space:]])
+
+	if [[ $trimmedLine != ${COMMENT_CHARACTER}* && ${#trimmedLine} != 0 ]]; then
+		echo 0
+	else
+		echo 1
+	fi
+}
+############################################################################################
 
 
 ##MAIN SCRIPT###
@@ -220,7 +383,7 @@ declare -a centosPackages=(
 	db4-devel \
 	libpcap-devel \
 	xz-devel \
-	python-devel \ 
+	python-devel \
     python-nose \
     python-setuptools \
     gcc \
@@ -229,19 +392,19 @@ declare -a centosPackages=(
     blas-devel \
     lapack-devel \
     atlas-devel \
-	libpng-devel
+    libpng-devel
 )
 
 declare -a centosGroups=(
-		'Development tools'
-	)
+	'Development tools'
+)
 
 platform=$(python -mplatform)
-if [ $(echo $platform | grep -i debian) ]; then
+if [[ $(echo $platform | grep -i 'debian\|ubuntu') ]]; then
 	for package in "${ubuntuPackages[@]}"; do
 		checkAndInstallPackage $package
 	done
-elif [ $(echo $platform | grep -i centos) ]; then
+elif [[ $(echo $platform | grep -i centos) ]]; then
 	for package in "${centosPackages[@]}"; do
 		checkAndInstallPackage $package
 	done
@@ -267,26 +430,57 @@ fi
 
 
 #----------------------------------------------------------------------------------------------------
+
+#after something like python 2.7.11, pip came standard in python, so there was no need to install it.
 #basics of installation, pip, virtualenv, virtualenvWrapper
 #check if pip is installed
-pipInstalled=$(checkInstalled "pip")
+#pipInstalled=$(checkInstalled "pip")
+#
+#if [  $pipInstalled -eq 1 ]; then
+#    echo "pip is not installed... "
+#    echo -e "back in 2015, instructions for installing pip could be found at ${BLUE}https://pip.pypa.io/en/latest/installing.html${NC}"
+#    #exits if script is executed, not if its sourced
+#    if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
+#fi
 
-if [  $pipInstalled -eq 1 ]; then
-	echo "pip is not installed... "
-	echo -e "back in 2015, instructions for installing pip could be found at ${BLUE}https://pip.pypa.io/en/latest/installing.html${NC}"
-	#exits if script is executed, not if its sourced
-	if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
+#checking that pip is using the same version of python that we are using...
+#topLine=$(head -1 $(which pip))
+#pipPython=${topLine:2}
+#if [ $pipPython != $pythonPath ]; then 
+#	echo -e "${RED}The python installation used by pip is not the same as the python path specified for script${NC}"
+#	echo -e "${GREEN}pip python: $pipPython${NC}"
+#	echo -e "${GREEN}python path: $pythonPath${NC}"
+#	echo -e "\n\n${RED}If pip python is incorrect, please reinstall pip using the correct python path${NC}"
+#	echo -e "${RED}If python path is incorrect, then please specify the correct path using the --python option${NC}"
+#	if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
+#fi
+#--------------------------------------------------------------------------------------------------
+#lets check if we are currently in a virtual environment, if we are, lets get out because that will
+#mess everything up
+echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+if [ $(inVirtualEnv) -eq 0 ]; then
+	deactivate
 fi
+
+
+#it seems like the -p option in mkvirtualenv should take care of this, but we end up getting errors like
+#/usr/bin/python no module virtualenv
+#which indicates that for some reason it is referencing back to what ever the python command is referencing
+#set this before starting the virtualenv stuff
+export VIRTUALENVWRAPPER_PYTHON=$pythonPath
+
 
 #check if virtualenv is installed
 virtualenvPackage="virtualenv"
-virtualenvInstalled=$(checkInstalled $virtualenvPackage)
+
+#0 if installed, 1 otherwise
+virtualenvInstalled=$($pythonPath -m pip freeze | grep -q $virtualenvPackage; echo $?)
 
 if [ $virtualenvInstalled -eq 1 ]; then
 	echo "virtualenv does not appear to be installed" 
 	checkAndInstallPipPackage $virtualenvPackage --sudo
 	#checks if installation complted
-	if [ $(checkInstalled $virtualenvPackage) -eq 1 ]; then
+	if [ $($pythonPath -m pip freeze | grep -q $virtualenvPackage; echo $?) -eq 1 ]; then
 		#exits if script is executed, not if its sourced
 		if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
 	fi
@@ -295,54 +489,58 @@ fi
 #check if virtualenvwrapper is installed
 virtualenvWrapperLocation=$(which virtualenvwrapper.sh)
 
-if [ x$virtualenvWrapperLocation = x ]; then
-	echo "virtualenvwrapper does not appear to be installed" 
-	checkAndInstallPipPackage "virtualenvwrapper" --sudo
-	
-	#check if installation succeeded
-	virtualenvWrapperLocation=$(which virtualenvwrapper.sh)
-	if [ x$virtualenvWrapperLocation = x ]; then
-		#exits if script is executed, not if its sourced
-		if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
-	fi
-else 
-	source $virtualenvWrapperLocation
+#check if wrapper is installed on local python
+virtualenvWrapperInstalledOnPythonPath=$($pythonPath -m pip freeze | grep -q virtualenvwrapper; echo $?)
+
+if [[ x$virtualenvWrapperLocation = x || $virtualenvWrapperInstalledOnPythonPath != 0 ]]; then
+    echo "virtualenvwrapper does not appear to be installed"
+    checkAndInstallPipPackage "virtualenvwrapper" --sudo
+
+    #check if installation succeeded
+    virtualenvWrapperLocation=$(which virtualenvwrapper.sh)
+    virtualenvWrapperInstalledOnPythonPath=$($pythonPath -m pip freeze | grep -q virtualenvwrapper; echo $?)
+    if [[ x$virtualenvWrapperLocation = x || $virtualenvWrapperInstalledOnPythonPath != 0 ]]; then
+            #exits if script is executed, not if its sourced
+            if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
+    fi
 fi
+
+
+#if users have multiple installations of python that they are using it can create havoc having the following environment variables 
+#set in your bashrc (for instance VIRTUALENVWRAPPER_PYTHON can only point to one installation of python.   For that reason, we will set
+#them in the provision script, and advise removing them from the bashrc
+export VIRTUALENVWRAPPER_PYTHON=$pythonPath
+export WORKON_HOME=$HOME/.virtualenvs
+source $virtualenvWrapperLocation
 
 #check if virtualenwrapper has been added appropriately to bashrc
-grep -q "WORKON_HOME" $HOME/.bashrc
+#grep -q "WORKON_HOME" $HOME/.bashrc
 workonHome=$?
-if [ $workonHome != 0 ]; then
-	echo -e "WORKON_HOME has not been added to $HOME/.bashrc as suggested by virtualenvwrapper"
-	permission=$(getAnswer "append WORKON_HOME to .bashrc")
-	if [[ $permission == [yY] ]];then
-		echo -e "\n#################" >> $HOME/.bashrc
-		echo -e "#where virtualenv stores its virtual environments"
-		echo -e "export WORKON_HOME=$HOME/.virtualenvs" >> $HOME/.bashrc
-        source $HOME/.bashrc
-	fi
+if [ $workonHome = 0 ]; then
+	echo -e "${RED}WORKON_HOME has been added to $HOME/.bashrc"
+	echo -e "${RED}Although this is recommended in the documentation for VirtualEnvWrapper, we recommend you delete it, and use the provision"
+	echo -e "${RED}script to enter the environment${NC}"
 fi
 
+#check if sourcing the virtualenvWrapper.sh has been added to bashrc
 grep -q $(which virtualenvwrapper.sh) $HOME/.bashrc
-sourceResult=$?
-if [ $sourceResult != 0 ]; then
-	echo -e "source virtualenvwrapper has not been added to $HOME/.bashrc as suggested by virtualenvwrapper"
-	permission=$(getAnswer "append the source to .bashrc")
-	if [[ $permission == [yY] ]];then
-		#getting the python version that pip is pointing to
-		topLine=$(head -1 $(which pip))
-		pythonLoc=${topLine:2}
-		echo -e "\n#################" >> $HOME/.bashrc
-		echo -e "#environment variable needed by wrapper" >> $HOME/.bashrc
-		echo -e "VIRTUALENVWRAPPER_PYTHON=\"$pythonLoc\"" >> $HOME/.bashrc
-		echo -e "#allows access to virtualenvwrappers lovely scripts"
-		echo -e "source $virtualenvWrapperLocation" >> $HOME/.bashrc
-        source $HOME/.bashrc
-	fi
-fi
+wrapperResult=$?
 
+if [ $wrapperResult = 0 ]; then
+  	echo -e "${RED}'source virtualenvwrapper' has been added to $HOME/.bashrc as suggested by virtualenvwrapper"
+ 	echo -e "${RED}Although this is recommended in the documentation for VirtualEnvWrapper, we recommend you delete it, and use the provision"
+	echo -e "${RED}script to enter the environment${NC}"
+fi
 
 #----------------------------------------------------------------------------------------------------
+#lets check if we are currently in a virtual environment, if we are, lets get out because that will
+#mess everything up
+if [ $(inVirtualEnv) -eq 0 ]; then
+	echo -e "${RED}Presently in environmnet ${GREEN} $(basename $VIRTUAL_ENV)${RED}, exiting environment${NC}" 
+	deactivate
+fi
+
+
 #locating appropriate virtualenv
 #list all the locally available environments
 environmentFound=false
@@ -356,49 +554,123 @@ done
 #check if the environment was found, if not, then create it
 if [ $environmentFound != true ]; then
 	echo "environment $ENVIRONMENT_NAME not found, creating..."
-	mkvirtualenv $ENVIRONMENT_NAME
+
+	#check to see if the pythonPath points to the correct version of python... if not, we might as
+	#well stop here...
+	if [ $(checkPythonVersion $pythonPath) -eq 0 ]; then
+		#this will drop us into the new environment
+		mkvirtualenv -p $pythonPath $ENVIRONMENT_NAME
+	else
+		currentVersion=$(getPythonVersion $pythonPath)
+		echo -e "pythonPath ($pythonPath) points to version $currentVersion; which is not constistent"
+		echo -e "with PYTHON_VERSION=$PYTHON_VERSION, as specified in the provision script"
+		echo -e "A specific python installation may be specified with the --python option, please see help (-h, --help)"
+		echo -e "for more details"
+		if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
+	fi 
 fi
 
 #---------------------------------------------------------------------------------------------------
 #make sure that all required python libraries for environment are installed and up to date
 echo -e "${RED}checking state of environment $ENVIRONMENT_NAME${NC}"
 
+#ok, now we are definitely in the virtual environment... check to make sure its using the appropriate version of python.
+#here we should be able to use the python command (as opposed to $pythonPath)
+if [ $(checkPythonVersion) -ne 0 ]; then
+	currentVersion=$(getPythonVersion)
+	echo -e "environment $ENVIRONMENT_NAME, has a python version of $currentVersion,"
+	echo -e "which does not match the version specified in the script, $PYTHON_VERSION..."
+	echo -e "you're probably best off deleting the environment (rmvirtualenv $ENVIRONMENT_NAME)"
+	echo -e "and recreating it"
+	if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi	
+fi
+
 if [ ! -f $REQUIREMENTS ]; then
 	echo "no requirements list detected in current directory ($(pwd -P))"
 	if [ "$0" = "${BASH_SOURCE[0]}" ]; then exit 1; else return 1; fi
 fi
 
-for package in $(cat $REQUIREMENTS); do	
-	echo -e "${RED}Checking for installation of package $package${NC}"
-	installPipPackage $package
+
+#check for dependencies, and install anything missing
+for line in $(cat $REQUIREMENTS); do	
+	#testing for comment line
+	trimmedLine=$(echo $line | tr -d [[:space:]])
+	if [[ $(isValidRequirementLine $trimmedLine) == 0 ]]; then
+		#parsing the pythonPackage and version information from the requirements line  (example: numpy==1.8.2) 
+		pythonPackage=$(echo $trimmedLine | awk -F"==" '{print $1}' | sed -e 's/^[[:space:]]*//' | sed -e 's/[[:space:]]*$//')
+		#version may very well be empty, if version wasn't explicitly set in requirements file
+		version=$(echo $trimmedLine | awk -F"==" '{print $2}' | sed -e 's/^[[:space:]]*//' | sed -e 's/[[:space:]]*$//')
+
+		#check if this pythonnPackage is currently installed in the environment
+		installedVersion=$(pip show $pythonPackage | grep -e "^Version:" |  cut -d " " -f2 | sed -e 's/^[[:space:]]*//' | sed -e 's/[[:space:]]*$//')
+
+		
+		echo -e "${RED}Checking for installation of package $pythonPackage${NC}"
+
+		if [[ "x"$installedVersion = "x" ]]; then
+			#package has not been installed at all
+			installPipPackage $trimmedLine
+		elif [[ "x"$version == "x" ]]; then
+			#the requirements document doesn't specify a version.  Thus, anything will do
+			echo -e "$REQUIREMENTS does not specify a version for package $pythonPackage, $installedVersion currently installed"
+		elif [[ $installedVersion != $version ]]; then
+			#package is installed, but versions don't match
+			echo -e "Installed Version: $installedVersion; requiredVersion: $version, installing correct version"
+			installPipPackage $trimmedLine
+		else 
+			echo -e "$pythonPackage, version $version, already installed..."
+		fi
+	fi
+
 done
 
 verifyDependencies $REQUIREMENTS
 dependencyResult=$?
+
+
+#---------------------------------------------------------------------------------------------------
+#this will print a line of the form |-----------|, where - is the lineChar, and the number is repeats
+#example, to print |=====|  one would call $printLine 5 "="
+function printLine() {
+	repeats=$1
+	lineChar=$2
+	command="printf \"|\" && printf -- '$lineChar%.0s' {1..$repeats} && printf \"|\n\""
+	eval $command
+}
 #---------------------------------------------------------------------------------------------------
 
+
+lineLength=$((${#ENVIRONMENT_NAME} + 36))
+sepLength=$(($lineLength + 1))
 if [ $dependencyResult -ne 0 ]; then
-		echo "-------------------------------------------------"
-		printf "%s%-46s %s\n" "|" "provisioning failed" "|"
-		echo "-------------------------------------------------"
+		printLine ${sepLength} "-"
+		printf "%s%-${lineLength}s %s\n" "|" "provisioning failed" "|"
+		printLine ${lineLength} "-"
 else if [ "$0" = "${BASH_SOURCE[0]}" ]; then 
-		echo "-------------------------------------------------"
-		printf "%s%-46s %s\n" "|" "provisioning complete" "|"
-		printf "%s%-46s %s\n" "|" "environment $ENVIRONMENT_NAME should up to date" "|"	
-		echo "|===============================================|"
-		printf "%s%-46s %s\n" "|" "to access the environment, execute..." "|"
-		printf "%s%-46s %s\n" "|" "workon $ENVIRONMENT_NAME" "|"
-		echo "|===============================================|"
-		printf "%s%-46s %s\n" "|" "to exit environment, execute..." "|"
-		printf "%s%-46s %s\n" "|" "deactivate" "|"
-		echo "-------------------------------------------------"
+		printLine ${sepLength} "-"
+		printf "%s%-${lineLength}s %s\n" "|" "provisioning complete" "|"
+		printf "%s%-${lineLength}s %s\n" "|" "environment $ENVIRONMENT_NAME should up to date" "|"	
+		printLine ${sepLength} "="
+		printf "%s%-${lineLength}s %s\n" "|" "to access the environment, execute..." "|"
+		printf "%s%-${lineLength}s %s\n" "|" "workon $ENVIRONMENT_NAME" "|"
+		printLine ${sepLength} "="
+		printf "%s%-${lineLength}s %s\n" "|" "to exit environment, execute..." "|"
+		printf "%s%-${lineLength}s %s\n" "|" "deactivate" "|"
+		printLine ${sepLength} "-"
 	else
-		echo "-------------------------------------------------"
-		printf "%s%-46s %s\n" "|" "provisioning complete" "|"
-		printf "%s%-46s %s\n" "|" "environment $ENVIRONMENT_NAME should up to date" "|"	
-		echo "|===============================================|"
-		printf "%s%-46s %s\n" "|" "to exit environment, execute..." "|"
-		printf "%s%-46s %s\n" "|" "deactivate" "|"
-		echo "-------------------------------------------------"
+		printLine $sepLength "-"
+		printf "%s%-${lineLength}s %s\n" "|" "provisioning complete" "|"
+		printf "%s%-${lineLength}s %s\n" "|" "environment $ENVIRONMENT_NAME should up to date" "|"	
+		printLine $sepLength "="
+		printf "%s%-${lineLength}s %s\n" "|" "to exit environment, execute..." "|"
+		printf "%s%-${lineLength}s %s\n" "|" "deactivate" "|"
+		printLine $sepLength "-"
 	fi
 fi
+
+
+#resetting IFS, just in case someone cares
+IFS=$IFS_BKP
+
+#Symbolic links for the data file and other things in the standard python template
+#createSymbolicLinks
