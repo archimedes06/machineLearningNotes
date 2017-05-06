@@ -10,3 +10,5 @@ jupyter==1.0.0
 Theano==0.7.0
 Unidecode==0.4.18
 igraph==0.1.8
+octave-kernel==0.26.0
+seaborn==0.7.1

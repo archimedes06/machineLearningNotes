@@ -19,7 +19,7 @@ IFS=$(echo -e "\n\r")
 
 #name of the projects environment
 #choose somehting unique, as we will overwrite the environment of this name on the users machine
-ENVIRONMENT_NAME="default"
+ENVIRONMENT_NAME="defaultII"
 
 #location of the requirements document
 REQUIREMENTS="requirements.pip"
@@ -45,6 +45,15 @@ function printHelp() {
 	echo -e "${RED}***Note: sourcing provision will leave the shell in the created virtual environment${NC}"
 	echo -e "${RED}EXAMPLE${NC}"
 	echo -e "${RED}\tsource provision --proxy \"http://contractorproxyeast.northgrum.com\"${NC}"
+	echo -e "${WHITE}${BOLD}\n------------------------------------------------------------------------------${NC}"
+	echo -e "${RED}This installation uses ${WHITE}${BOLD}Octave${NC}${RED} and requires the addition of the${NC}"
+	echo -e "${RED}Octave reppository ${WHITE}${BOLD}(ppa:octave/stable)${NC}"
+	echo -e "${GREEN}\tsudo add-apt-repository ppa:octave/stable${NC}"
+	echo -e "${GREEN}\tsudo apt-get update${NC}"
+	echo -e "${GREEN}\tsudo apt-get install octave${NC}"
+	echo -e "${RED}\nAdditionally, a second installation step is required to make the octave kernal active in jupyter"
+	echo -e "${RED}inside the the $ENVIRONMENT_NAME virtualenv, execute the following"
+	echo -e "${GREEN}\tpython -m octave_kernel.install${NC}"
 	echo -e "${WHITE}${BOLD}\n------------------------------------------------------------------------------${NC}"
 
 }
@@ -240,7 +249,7 @@ function checkAndInstallPackage () {
 function checkForInstalledPackage () {
 	package=$1
 	platform=$(python -mplatform)
-	if [ $(echo $platform | grep -i debian) ]; then
+	if [ $(echo $platform | grep -i 'debian\|ubuntu') ]; then
 		dpkg -s $package > /dev/null 2>&1
 		echo $? 
 	elif [ $(echo $platform | grep -i centos) ]; then
@@ -369,7 +378,8 @@ declare -a ubuntuPackages=(python-dev \
 	libfreetype6-dev \
 	libatlas-dev \
 	libatlas-base-dev\
-	gfortran)
+	gfortran \
+	octave)	
 
 declare -a centosPackages=(
 	zlib-devel \
