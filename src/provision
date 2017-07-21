@@ -54,6 +54,11 @@ function printHelp() {
 	echo -e "${RED}\nAdditionally, a second installation step is required to make the octave kernal active in jupyter"
 	echo -e "${RED}inside the the $ENVIRONMENT_NAME virtualenv, execute the following"
 	echo -e "${GREEN}\tpython -m octave_kernel.install${NC}"
+	echo -e "${RED}\nTo activate facets follow instructions here https://github.com/pair-code/facets"
+	echo -e "${GREEN}\tgit clone https://github.com/PAIR-code/facets"
+        echo -e "${GREEN}\tcd facets"
+	echo -e "${GREEN}\tworkon $ENVIRONMENT_NAME"
+	echo -e "${GREEN}\tjupyter nbextension install facets-dist/ --user"
 	echo -e "${WHITE}${BOLD}\n------------------------------------------------------------------------------${NC}"
 
 }
