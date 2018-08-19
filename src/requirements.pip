@@ -14,3 +14,4 @@ octave-kernel==0.26.0
 seaborn==0.7.1
 pymc3==3.0
 protobuf==3.3.0
+statsmodels==0.9.0
